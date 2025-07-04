@@ -1,8 +1,9 @@
 # AB
 
 set (src    "./main.c"
-            "nvs_store.c"
-            "webserver.c"
+            "./indicator.c"
+            "./nvs_store.c"
+            "./webserver.c"
     )
 
 set (inc    "."

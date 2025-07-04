@@ -8,6 +8,11 @@
 
 #include "esp_spiffs.h"
 
+#include "driver/gpio.h"
+#include "indicator.h"
+
+Indicator_t led;
+
 static const char *TAG = "BootBone";
 
 void mount_spiffs() {
@@ -44,5 +49,11 @@ static void bootbone_task(void *pvParameters) {
 }
 
 void app_main(void) {
+    
+    Indicator_Init(&led, GPIO_NUM_6);
+
+    Indicator_Control(&led, INDICATOR_BLINK);
+    vTaskDelay(pdMS_TO_TICKS(2000));
+
     xTaskCreate(bootbone_task, "bootbone_task", 8192, NULL, 5, NULL);
 }
