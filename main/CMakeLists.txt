@@ -4,6 +4,7 @@ set (src    "./main.c"
             "./indicator.c"
             "./nvs_store.c"
             "./webserver.c"
+            "./ws_comm.c"
     )
 
 set (inc    "."

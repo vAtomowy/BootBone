@@ -5,6 +5,7 @@
 #include "esp_event.h"
 #include "esp_netif.h"
 #include "esp_http_server.h"
+#include "esp_spiffs.h"
 #include <string.h>
 
 static const char *TAG = "WebServer";
@@ -116,6 +117,24 @@ static const char* form_html =
    "  </footer>"
    "</body>"
    "</html>";
+
+void mount_spiffs() 
+{
+    esp_vfs_spiffs_conf_t conf = {
+      .base_path = "/spiffs",
+      .partition_label = NULL,
+      .max_files = 5,
+      .format_if_mount_failed = true
+    };
+    esp_err_t ret = esp_vfs_spiffs_register(&conf);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "SPIFFS Mount failed");
+    } else {
+        size_t total = 0, used = 0;
+        esp_spiffs_info(NULL, &total, &used);
+        ESP_LOGI(TAG, "SPIFFS mounted. Total: %d, Used: %d", total, used);
+    }
+}
 
 static esp_err_t root_handler(httpd_req_t *req) {
     httpd_resp_set_type(req, "text/html");

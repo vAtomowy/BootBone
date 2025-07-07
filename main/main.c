@@ -6,31 +6,12 @@
 #include "nvs_store.h"
 #include "webserver.h"
 
-#include "esp_spiffs.h"
-
 #include "driver/gpio.h"
 #include "indicator.h"
 
 Indicator_t led;
 
 static const char *TAG = "BootBone";
-
-void mount_spiffs() {
-    esp_vfs_spiffs_conf_t conf = {
-      .base_path = "/spiffs",
-      .partition_label = NULL,
-      .max_files = 5,
-      .format_if_mount_failed = true
-    };
-    esp_err_t ret = esp_vfs_spiffs_register(&conf);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "SPIFFS Mount failed");
-    } else {
-        size_t total = 0, used = 0;
-        esp_spiffs_info(NULL, &total, &used);
-        ESP_LOGI(TAG, "SPIFFS mounted. Total: %d, Used: %d", total, used);
-    }
-}
 
 static void bootbone_task(void *pvParameters) {
 
@@ -51,9 +32,22 @@ static void bootbone_task(void *pvParameters) {
 void app_main(void) {
     
     Indicator_Init(&led, GPIO_NUM_6);
-
     Indicator_Control(&led, INDICATOR_BLINK);
     vTaskDelay(pdMS_TO_TICKS(2000));
 
     xTaskCreate(bootbone_task, "bootbone_task", 8192, NULL, 5, NULL);
 }
+
+// Zapis danych
+// nvs_store_queue_save_device_info("MojeUrządzenie", 12345);
+// nvs_store_queue_save_ca_cert(ca_cert_pem_string);
+
+// // Odczyt
+// char devname[64];
+// uint32_t devid;
+// nvs_store_get_device_info(devname, sizeof(devname), &devid);
+
+// char cert_buf[4096];
+// if (nvs_store_get_ca_cert(cert_buf, sizeof(cert_buf)) == ESP_OK) {
+//     ESP_LOGI(TAG, "CA cert: %s", cert_buf);
+// }
