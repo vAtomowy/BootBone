@@ -4,3 +4,4 @@
 
 void mount_spiffs(void);
 esp_err_t webserver_start(void);
+void webserver_stop(void);

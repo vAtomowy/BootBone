@@ -5,6 +5,8 @@ set (src    "./main.c"
             "./nvs_store.c"
             "./webserver.c"
             "./ws_comm.c"
+            "./sta_comm.c"
+            "./network_mgr"
     )
 
 set (inc    "."

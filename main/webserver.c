@@ -1,14 +1,18 @@
 #include "webserver.h"
 #include "nvs_store.h"
+#include "events.h"
 #include "esp_log.h"
 #include "esp_wifi.h"
 #include "esp_event.h"
 #include "esp_netif.h"
 #include "esp_http_server.h"
 #include "esp_spiffs.h"
+#include "network_mgr.h"
+#include "sta_comm.h"
 #include <string.h>
 
 static const char *TAG = "WebServer";
+
 static httpd_handle_t server = NULL;
 
 static const char* form_html = 
@@ -181,34 +185,29 @@ static esp_err_t save_handler(httpd_req_t *req) {
     httpd_resp_set_status(req, "302 Found");
     httpd_resp_set_hdr(req, "Location", "/");
     httpd_resp_send(req, NULL, 0);
+
+    xEventGroupSetBits(bootbone_s, PROV_DONE);
     return ESP_OK;
 }
 
-static void wifi_init_softap(void) {
-    ESP_LOGI(TAG, "Starting WiFi SoftAP...");
-    esp_netif_init();
-    esp_event_loop_create_default();
-    esp_netif_create_default_wifi_ap();
-
-    wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
-    esp_wifi_init(&cfg);
-    esp_wifi_set_mode(WIFI_MODE_AP);
-
-    wifi_config_t wifi_ap_config = { 0 };
-    strncpy((char*)wifi_ap_config.ap.ssid, "Bootbone-Setup", sizeof(wifi_ap_config.ap.ssid));
-    wifi_ap_config.ap.ssid_len = strlen("Bootbone-Setup");
-    wifi_ap_config.ap.channel = 1;
-    wifi_ap_config.ap.max_connection = 4;
-    wifi_ap_config.ap.authmode = WIFI_AUTH_OPEN;
-
-    esp_wifi_set_config(WIFI_IF_AP, &wifi_ap_config);
-    esp_wifi_start();
+static esp_err_t save_get_redirect(httpd_req_t *req) 
+{
+    httpd_resp_set_status(req, "302 Found");
+    httpd_resp_set_hdr(req, "Location", "/");
+    return httpd_resp_send(req, NULL, 0);
 }
 
 esp_err_t webserver_start(void) {
-    wifi_init_softap();
+    // 1) Start SoftAP przez manager (tu trzymasz dotychczasowe parametry)
+    net_ap_cfg_t ap = {0};
+    strncpy(ap.ssid, "Bootbone-Setup", sizeof(ap.ssid));
+    ap.channel = 1;
+    ap.max_conn = 4;
+    ap.authmode = WIFI_AUTH_OPEN;
+    ESP_ERROR_CHECK(network_mgr_start_ap(&ap));  // bez esp_netif_init/esp_event_loop_create_default/esp_wifi_init tutaj
 
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
+
     if (httpd_start(&server, &config) == ESP_OK) {
         httpd_uri_t root = {
             .uri = "/", .method = HTTP_GET, .handler = root_handler
@@ -216,11 +215,15 @@ esp_err_t webserver_start(void) {
         httpd_uri_t save = {
             .uri = "/save", .method = HTTP_POST, .handler = save_handler
         };
+        httpd_uri_t save_get = { 
+            .uri="/save", .method=HTTP_GET, .handler = save_get_redirect 
+        };
         httpd_uri_t logo_uri = { 
             .uri = "/logo.png", .method = HTTP_GET, .handler = logo_handler
         };
         httpd_register_uri_handler(server, &root);
         httpd_register_uri_handler(server, &save);
+        httpd_register_uri_handler(server, &save_get);
         httpd_register_uri_handler(server, &logo_uri);
         return ESP_OK;
     }
@@ -233,4 +236,5 @@ void webserver_stop(void) {
         httpd_stop(server);
         server = NULL;
     }
+    ESP_LOGI(TAG, "Stopping SoftAP...");
 }
