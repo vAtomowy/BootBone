@@ -7,6 +7,7 @@ set (src    "./main.c"
             "./ws_comm.c"
             "./sta_comm.c"
             "./network_mgr"
+            "./bbapi.c"
     )
 
 set (inc    "."

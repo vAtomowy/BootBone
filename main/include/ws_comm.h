@@ -1,10 +1,25 @@
-#ifndef WEBSOCKET_SERVER_H
-#define WEBSOCKET_SERVER_H
+#pragma once
+#include "esp_err.h"
+#include <stdbool.h>
+#include "freertos/FreeRTOS.h"
+#include "freertos/queue.h"
 
-void websocket_server_start(void);
+#ifdef __cplusplus
+extern "C" {
+#endif
 
-void websocket_send_json(const char *json_str);
+esp_err_t ws_comm_start(const char* uri);  
+void ws_comm_stop(void);                  
+bool ws_comm_is_connected(void);          
 
-void websocket_set_on_receive(void (*callback)(const char *json_str));
+esp_err_t ws_comm_send_text(const char* text);                   
+esp_err_t ws_comm_send_text_timeout(const char* text, TickType_t to); 
 
-#endif 
+bool ws_comm_recv_text(char* out, size_t out_len, TickType_t to); 
+
+size_t ws_comm_tx_queued(void);            
+size_t ws_comm_rx_queued(void);           
+
+#ifdef __cplusplus
+}
+#endif
