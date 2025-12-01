@@ -5,6 +5,8 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/queue.h"
+
+#include "esp_task_wdt.h"
 #include "esp_log.h"
 #include <string.h>
 #include <inttypes.h>
@@ -12,39 +14,54 @@
 #define NVS_NAMESPACE "boneboot"
 #define TAG "NVS_STORE"
 
-static nvs_handle_t s_nvs_handle;
-static QueueHandle_t s_nvs_queue;
-static TaskHandle_t s_nvs_task;
+static nvs_handle_t s_nvs_handle = 0;
+static QueueHandle_t s_nvs_queue = NULL;
+static TaskHandle_t s_nvs_task = NULL;
 
 static void nvs_worker_task(void *param) 
 {
+    esp_task_wdt_add(NULL);
+
     nvs_cmd_t cmd;
     while (1) {
-        if (xQueueReceive(s_nvs_queue, &cmd, portMAX_DELAY) == pdTRUE) {
+        esp_task_wdt_reset();
+
+        if (xQueueReceive(s_nvs_queue, &cmd, pdMS_TO_TICKS(100)) == pdTRUE) {
+            esp_err_t err = ESP_OK;
             switch (cmd.type) {
-                case NVS_CMD_SAVE_WIFI:
-                    ESP_LOGI(TAG, "Saving WiFi config: %s / %s", cmd.ssid, cmd.pass);
-                    nvs_set_str(s_nvs_handle, "wifi_ssid", cmd.ssid);
-                    nvs_set_str(s_nvs_handle, "wifi_pass", cmd.pass);
+                case NVS_CMD_SET_STR:
+                    ESP_LOGD(TAG, "SET STR: %s", cmd.key);
+                    err = nvs_set_str(s_nvs_handle, cmd.key, cmd.str_value);
                     nvs_commit(s_nvs_handle);
                     break;
+                case NVS_CMD_SET_U32:
+                    ESP_LOGD(TAG, "SET U32: %s", cmd.key);
+                    err = nvs_set_u32(s_nvs_handle, cmd.key, cmd.u32_value);
+                    nvs_commit(s_nvs_handle);
+                    break;
+                case NVS_CMD_GET_STR:
+                    cmd.out_len = sizeof(cmd.str_value);
+                    err = nvs_get_str(s_nvs_handle, cmd.key, cmd.str_value, &cmd.out_len);
+                    if (err != ESP_OK) cmd.out_len = 0;
+                    xQueueSend(s_nvs_queue, &cmd, 0);
+                    vTaskDelay(pdMS_TO_TICKS(1));
+                    continue;
+                case NVS_CMD_GET_U32:
+                    err = nvs_get_u32(s_nvs_handle, cmd.key, &cmd.u32_value);
+                    cmd.out_len = (err == ESP_OK) ? 4 : 0;
+                    xQueueSend(s_nvs_queue, &cmd, 0);
+                    vTaskDelay(pdMS_TO_TICKS(1));
+                    continue;
                 case NVS_CMD_RESET:
-                    ESP_LOGW(TAG, "Erasing NVS namespace");
+                    ESP_LOGW(TAG, "RESET NVS");
                     nvs_erase_all(s_nvs_handle);
                     nvs_commit(s_nvs_handle);
                     break;
-                case NVS_CMD_SAVE_DEVICE_INFO:
-                    ESP_LOGI(TAG, "Saving device name: %s, ID: %" PRIu32, cmd.device_name, cmd.device_id);
-                    nvs_set_str(s_nvs_handle, "dev_name", cmd.device_name);
-                    nvs_set_u32(s_nvs_handle, "dev_id", cmd.device_id);
-                    nvs_commit(s_nvs_handle);
-                    break;
-                case NVS_CMD_SAVE_CA_CERT:
-                    ESP_LOGI(TAG, "Saving CA cert");
-                    nvs_set_str(s_nvs_handle, "ca_cert", cmd.ca_cert);
-                    nvs_commit(s_nvs_handle);
-                    break;
             }
+            vTaskDelay(pdMS_TO_TICKS(2));
+        } else {
+            esp_task_wdt_reset();
+            vTaskDelay(pdMS_TO_TICKS(10));
         }
     }
 }
@@ -68,75 +85,62 @@ esp_err_t nvs_store_init(void)
     return ESP_OK;
 }
 
-esp_err_t nvs_store_queue_save_wifi(const char *ssid, const char *pass) 
-{
-    nvs_cmd_t cmd = {
-        .type = NVS_CMD_SAVE_WIFI,
-    };
-    strncpy(cmd.ssid, ssid, sizeof(cmd.ssid) - 1);
-    strncpy(cmd.pass, pass, sizeof(cmd.pass) - 1);
+esp_err_t nvs_store_set_str(const char* key, const char* value) {
+    if (!s_nvs_queue) return ESP_FAIL;
+    nvs_cmd_t cmd = { .type = NVS_CMD_SET_STR };
+    strncpy(cmd.key, key, sizeof(cmd.key) - 1);
+    cmd.key[sizeof(cmd.key) - 1] = '\0';
+    strncpy(cmd.str_value, value, sizeof(cmd.str_value) - 1);
+    cmd.str_value[sizeof(cmd.str_value) - 1] = '\0';
     return xQueueSend(s_nvs_queue, &cmd, pdMS_TO_TICKS(100)) == pdTRUE ? ESP_OK : ESP_FAIL;
 }
 
-esp_err_t nvs_store_get_wifi(char *ssid_out, size_t ssid_len, char *pass_out, size_t pass_len) 
-{
-    esp_err_t err;
+esp_err_t nvs_store_set_u32(const char* key, uint32_t value) {
+    if (!s_nvs_queue) return ESP_FAIL;
+    nvs_cmd_t cmd = { .type = NVS_CMD_SET_U32 };
+    strncpy(cmd.key, key, sizeof(cmd.key) - 1);
+    cmd.key[sizeof(cmd.key) - 1] = '\0';
+    cmd.u32_value = value;
+    return xQueueSend(s_nvs_queue, &cmd, pdMS_TO_TICKS(100)) == pdTRUE ? ESP_OK : ESP_FAIL;
+}
 
-    err = nvs_get_str(s_nvs_handle, "wifi_ssid", ssid_out, &ssid_len);
-    if (err != ESP_OK) {
-        ESP_LOGW(TAG, "Failed to read SSID from NVS (%s)", esp_err_to_name(err));
-        return err;
+esp_err_t nvs_store_get_str(const char* key, char* buffer, size_t bufsize, size_t* out_len) {
+    if (!s_nvs_queue) return ESP_FAIL;
+    nvs_cmd_t cmd = { .type = NVS_CMD_GET_STR };
+    strncpy(cmd.key, key, sizeof(cmd.key) - 1);
+    cmd.key[sizeof(cmd.key) - 1] = '\0';
+
+    if (xQueueSend(s_nvs_queue, &cmd, pdMS_TO_TICKS(100)) != pdTRUE) {
+        return ESP_FAIL;
     }
-
-    err = nvs_get_str(s_nvs_handle, "wifi_pass", pass_out, &pass_len);
-    if (err != ESP_OK) {
-        ESP_LOGW(TAG, "Failed to read password from NVS (%s)", esp_err_to_name(err));
-        return err;
+    if (xQueueReceive(s_nvs_queue, &cmd, pdMS_TO_TICKS(500)) == pdTRUE) {
+        size_t len = cmd.out_len <= bufsize ? cmd.out_len : bufsize;
+        strncpy(buffer, cmd.str_value, len);
+        if (len > 0 && len < bufsize) buffer[len] = '\0';
+        if (out_len) *out_len = len;
+        return ESP_OK;
     }
-
-    ESP_LOGI(TAG, "Read WiFi config: %s / %s", ssid_out, pass_out);
-    return ESP_OK;
+    return ESP_ERR_NVS_NOT_FOUND;
 }
 
-esp_err_t nvs_store_queue_save_device_info(const char *name, uint32_t id)
-{
-    nvs_cmd_t cmd = {
-        .type = NVS_CMD_SAVE_DEVICE_INFO,
-        .device_id = id
-    };
-    strncpy(cmd.device_name, name, sizeof(cmd.device_name) - 1);
-    return xQueueSend(s_nvs_queue, &cmd, pdMS_TO_TICKS(100)) == pdTRUE ? ESP_OK : ESP_FAIL;
+esp_err_t nvs_store_get_u32(const char* key, uint32_t* value) {
+    if (!s_nvs_queue) return ESP_FAIL;
+    nvs_cmd_t cmd = { .type = NVS_CMD_GET_U32 };
+    strncpy(cmd.key, key, sizeof(cmd.key) - 1);
+    cmd.key[sizeof(cmd.key) - 1] = '\0';
+
+    if (xQueueSend(s_nvs_queue, &cmd, pdMS_TO_TICKS(100)) != pdTRUE) {
+        return ESP_FAIL;
+    }
+    if (xQueueReceive(s_nvs_queue, &cmd, pdMS_TO_TICKS(500)) == pdTRUE) {
+        *value = cmd.u32_value;
+        return ESP_OK;
+    }
+    return ESP_FAIL;
 }
 
-esp_err_t nvs_store_queue_save_ca_cert(const char *cert)
-{
-    nvs_cmd_t cmd = {
-        .type = NVS_CMD_SAVE_CA_CERT,
-        .ca_cert = cert  
-    };
-    return xQueueSend(s_nvs_queue, &cmd, pdMS_TO_TICKS(100)) == pdTRUE ? ESP_OK : ESP_FAIL;
-}
-
-esp_err_t nvs_store_get_device_info(char *name_out, size_t name_len, uint32_t *id_out)
-{
-    esp_err_t err;
-    err = nvs_get_str(s_nvs_handle, "dev_name", name_out, &name_len);
-    if (err != ESP_OK) return err;
-
-    err = nvs_get_u32(s_nvs_handle, "dev_id", id_out);
-    return err;
-}
-
-esp_err_t nvs_store_get_ca_cert(char *cert_out, size_t cert_len)
-{
-    esp_err_t err = nvs_get_str(s_nvs_handle, "ca_cert", cert_out, &cert_len);
-    return err;
-}
-
-esp_err_t nvs_store_queue_reset(void) 
-{
-    nvs_cmd_t cmd = {
-        .type = NVS_CMD_RESET,
-    };
+esp_err_t nvs_store_reset(void) {
+    if (!s_nvs_queue) return ESP_FAIL;
+    nvs_cmd_t cmd = { .type = NVS_CMD_RESET };
     return xQueueSend(s_nvs_queue, &cmd, pdMS_TO_TICKS(100)) == pdTRUE ? ESP_OK : ESP_FAIL;
 }

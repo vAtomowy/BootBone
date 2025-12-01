@@ -180,7 +180,8 @@ static esp_err_t save_handler(httpd_req_t *req) {
 
     char ssid[64] = {0}, pass[64] = {0};
     sscanf(buf, "ssid=%63[^&]&pass=%63s", ssid, pass);
-    nvs_store_queue_save_wifi(ssid, pass);
+    nvs_store_set_str("wifi_ssid", ssid);
+    nvs_store_set_str("wifi_passwd", pass);
 
     httpd_resp_set_status(req, "302 Found");
     httpd_resp_set_hdr(req, "Location", "/");
