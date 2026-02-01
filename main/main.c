@@ -23,7 +23,12 @@ EventGroupHandle_t bootbone_s;
 
 void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data);
 
-static void nvs_test_cycle(void);
+void fake_main_app_task(void* pv) {
+    ESP_LOGW("MAINAPP", "🚀 MainApp STUB - wgraj prawdziwą app!");
+    while(1) {
+        vTaskDelay(pdMS_TO_TICKS(5000));
+    }
+}
 
 static void bootbone_task(void *pvParameters) {
 
@@ -40,7 +45,6 @@ static void bootbone_task(void *pvParameters) {
 
     ESP_ERROR_CHECK(webserver_start());                                   
 
-    nvs_test_cycle();
     while (1) 
     {
 
@@ -91,16 +95,25 @@ static void bootbone_task(void *pvParameters) {
             xEventGroupSetBits(bootbone_s, CONNECTED_TO_AP);
         }
 
-        if (xEventGroupGetBits(bootbone_s) & CONNECTED_TO_AP) 
-        {
-            static bool ws_started = false;
-            if (!ws_started) {
-                BBAPI_init("ws://192.168.2.140:8000/ws");
-                ws_started = true;
+        if (xEventGroupGetBits(bootbone_s) & CONNECTED_TO_AP) {
+            static bool mainapp_started = false;  // Lepsza nazwa
+            if (!mainapp_started) {
+                ESP_LOGI(TAG, "=== CONNECTED - STARTING BBAPI ===");
+                esp_err_t err = BBAPI_init("ws://192.168.2.140:8000/ws");
+                if (err != ESP_OK) {
+                    ESP_LOGE(TAG, "BBAPI_init failed: %s", esp_err_to_name(err));
+                    vTaskDelay(pdMS_TO_TICKS(5000));
+                    continue;
+                }
+                
+                ESP_LOGI(TAG, "=== BBAPI READY - STARTING MAINAPP TASK (prio=6) ===");
+                xTaskCreate(fake_main_app_task, "main_app", 12288, NULL, 6, NULL);
+                mainapp_started = true;
+                
+                ESP_LOGI(TAG, "BootBone task ENDING - handover complete!");
+                vTaskDelete(NULL);  
             }
-            vTaskDelay(pdMS_TO_TICKS(500)); 
         }
-
         vTaskDelay(pdMS_TO_TICKS(100));
     }
     vTaskDelete(NULL);
@@ -112,45 +125,4 @@ void app_main(void) {
     vTaskDelay(pdMS_TO_TICKS(2000));
 
     xTaskCreate(bootbone_task, "bootbone_task", 8192, NULL, 5, NULL);
-}
-
-static void nvs_test_cycle(void) {
-    static uint32_t test_cycle = 0;
-    uint32_t read_cycle = 0;
-    char test_str[32] = {0};
-    size_t str_len = 0;
-    
-    ESP_LOGI("MAIN", "=== NVS TEST START ===");
-    
-    esp_err_t err = nvs_store_get_u32("test_cycle", &read_cycle);
-    if (err != ESP_OK) {
-        ESP_LOGI("MAIN", "No previous test_cycle found - starting fresh!");
-        read_cycle = 0;
-    } else {
-        ESP_LOGI("MAIN", "Previous cycle: %" PRIu32, read_cycle);
-    }
-    
-    test_cycle = read_cycle + 1;
-    nvs_store_set_u32("test_cycle", test_cycle);
-    ESP_LOGI("MAIN", "Writing NEW cycle: %" PRIu32, test_cycle);
-    
-    snprintf(test_str, sizeof(test_str), "BOOTBONE_v%lu.%lu", 
-             (test_cycle >> 24) & 0xFF, (test_cycle >> 16) & 0xFF);
-    nvs_store_set_str("test_fw", test_str);
-    
-    err = nvs_store_get_str("test_fw", test_str, sizeof(test_str), &str_len);
-    if (err == ESP_OK) {
-        ESP_LOGI("MAIN", "VERIFY: test_fw = '%s' (len=%zu)", test_str, str_len);
-    }
-
-    nvs_store_set_str("device_id", "ESP32C3-TEST123");
-    nvs_store_set_u32("hw_version", 0x00000B02); 
-    
-    char dev_id[33] = {0};
-    uint32_t hw_ver = 0;
-    nvs_store_get_str("device_id", dev_id, sizeof(dev_id), NULL);
-    nvs_store_get_u32("hw_version", &hw_ver);
-    
-    ESP_LOGI("MAIN", "DEVICE: ID='%s' HW=0x%" PRIx32, dev_id, hw_ver);
-    ESP_LOGI("MAIN", "=== NVS TEST CYCLE %" PRIu32 " OK ===", test_cycle);
 }

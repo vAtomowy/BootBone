@@ -16,8 +16,7 @@ esp_err_t BBAPI_send_text_timeout(const char* text, TickType_t to);
 bool BBAPI_recv_text(char* out, size_t out_len, TickType_t to);
 size_t BBAPI_tx_queued(void);
 size_t BBAPI_rx_queued(void);
-esp_err_t BBAPI_get_param(const char* key, void* buffer, size_t bufsize, size_t* out_len); 
-esp_err_t BBAPI_set_param(const char* key, const void* data, size_t data_len);
+esp_err_t BBAPI_get_param(const char* key, void* buffer, size_t bufsize, size_t* out_len);
 
 #ifdef __cplusplus
 }

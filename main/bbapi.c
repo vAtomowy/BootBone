@@ -9,6 +9,11 @@
 
 #define TAG "BBAPI"
 static bool s_initialized = false;
+static bool s_params_initialized = false;
+
+#define MAKE_VERSION(major, minor, patch, build) \
+    (((uint32_t)(major) << 24) | ((uint32_t)(minor) << 16) | ((uint32_t)(patch) << 8) | (uint32_t)(build))
+
 
 // ===== FAKE_API_TASK (wszystko prywatne) =====
 #define FAKE_TAG "FAKE_API"
@@ -87,7 +92,67 @@ static void fake_api_task(void* pv) {
 }
 
 // ===== WRAPERY BBAPI =====
+static const char* BOOTBONE_DEFAULT_PARAMS[][2] = {
+    {"device_id", "ESP32C3-DEFAULT"},
+    {"hw_model", "ESP32C3-DEV"},
+    {"device_type", "bootbone_controller"},
+    {"serial_number", "SN-00000000"},
+    {"nazwa_klienta", "Perplexity Labs"},
+    {"pub_key_hash", "0000000000000000000000000000000000000000000000000000000000000000"}
+};
+
+static void init_default_params(void) {
+    if (s_params_initialized) return;
+    
+    ESP_LOGI(TAG, "Initializing BootBone default parameters...");
+    
+    for (int i = 0; i < sizeof(BOOTBONE_DEFAULT_PARAMS) / sizeof(BOOTBONE_DEFAULT_PARAMS[0]); i++) {
+        nvs_store_set_str(BOOTBONE_DEFAULT_PARAMS[i][0], BOOTBONE_DEFAULT_PARAMS[i][1]);
+    }
+    
+    nvs_store_set_u32("hw_version", MAKE_VERSION(1, 0, 0, 0));
+    nvs_store_set_u32("bootbone_fw_version", MAKE_VERSION(1, 0, 0, 0));
+    nvs_store_set_u32("mainapp_fw_version", 0);
+    
+    nvs_store_set_u32("bbapi_init_flag", 1);  // Flaga inicjalizacji
+    s_params_initialized = true;
+    ESP_LOGI(TAG, "BootBone parameters initialized OK");
+}
+
+static bool is_bootbone_param(const char* key) 
+{
+    return strncmp(key, "device_id", 9) == 0 ||
+           strncmp(key, "hw_model", 8) == 0 ||
+           strncmp(key, "device_type", 10) == 0 ||
+           strncmp(key, "serial_number", 13) == 0 ||
+           strncmp(key, "nazwa_klienta", 13) == 0 ||
+           strncmp(key, "pub_key_hash", 12) == 0 ||
+           strncmp(key, "hw_version", 10) == 0 ||
+           strncmp(key, "bootbone_fw_version", 19) == 0 ||
+           strncmp(key, "mainapp_fw_version", 18) == 0;
+}
+
+static bool is_string_param(const char* key) 
+{
+    return strncmp(key, "device_id", 9) == 0 ||
+           strncmp(key, "hw_model", 8) == 0 ||
+           strncmp(key, "device_type", 10) == 0 ||
+           strncmp(key, "serial_number", 13) == 0 ||
+           strncmp(key, "nazwa_klienta", 13) == 0 ||
+           strncmp(key, "pub_key_hash", 12) == 0;
+}
+
 esp_err_t BBAPI_init(const char* ws_uri) {
+    if (s_initialized) return ESP_OK;
+    
+    ESP_ERROR_CHECK(nvs_store_init());
+    
+    uint32_t init_flag = 0;
+    if (nvs_store_get_u32("bbapi_init_flag", &init_flag) != ESP_OK || init_flag == 0) 
+    {
+        init_default_params();
+    }
+
     if (s_initialized) return ESP_OK;
     esp_err_t err = ws_comm_start(ws_uri);
     if (err != ESP_OK) return err;
@@ -130,26 +195,15 @@ size_t BBAPI_rx_queued(void) {
     return ws_comm_rx_queued();
 }
 
-esp_err_t BBAPI_get_param(const char* key, void* buffer, size_t bufsize, size_t* out_len)
-{
-    if (strncmp(key, "device_id", 9) == 0 || strncmp(key, "hw_model", 8) == 0 ||
-        strncmp(key, "device_type", 10) == 0 || strncmp(key, "serial_number", 13) == 0 ||
-        strncmp(key, "nazwa_klienta", 13) == 0 || strncmp(key, "pub_key_hash", 12) == 0) {
+esp_err_t BBAPI_get_param(const char* key, void* buffer, size_t bufsize, size_t* out_len) {
+    if (!is_bootbone_param(key)) {
+        return ESP_ERR_NOT_SUPPORTED; 
+    }
+    
+    if (is_string_param(key)) {
         return nvs_store_get_str(key, (char*)buffer, bufsize, out_len);
     } else {
         uint32_t* val = (uint32_t*)buffer;
         return nvs_store_get_u32(key, val);
     }
 }
-
-esp_err_t BBAPI_set_param(const char* key, const void* data, size_t data_len) {
-    if (data_len > 0 && data_len <= 256) {
-        return nvs_store_set_str(key, (const char*)data);
-    } else if (data_len == sizeof(uint32_t)) {
-        uint32_t val = *(const uint32_t*)data;
-        return nvs_store_set_u32(key, val);
-    }
-    // Inne rozmiary danych odrzuć lub dodaj obsługę w przyszłości
-    return ESP_ERR_INVALID_ARG;
-}
-
